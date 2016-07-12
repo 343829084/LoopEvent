@@ -1,5 +1,8 @@
+#ifndef TCPSERVER_H
+#define TCPSERVER_H
+
+
 #include <sys/socket.h>
-#include <sys/epoll.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -7,29 +10,41 @@
 #include <iostream>
 #include <sys/types.h>
 #include <unistd.h>
+#include <boost/make_shared.hpp>
+#include <boost/enable_shared_from_this.hpp>
+#include <iostream>
+#include "Channel.h"
+#include "Define.h"
 
 
-#define MAX_LINE 100
-#define MAX_EVENTS 500
-#define MAX_LISTENFD 5
 
-class TcpServer
+
+class TcpServer :
+  public boost::enable_shared_from_this<TcpServer>
 {
+
 public:
+  typedef boost::shared_ptr<Channel>  ChannelPtr;
+
+
+public:
+  TcpServer();
+  ~TcpServer();
 
   void start();
-  void handleRead(int efd, int fd);
-  void handleWrite(int efd, int fd);
-  void handleAccept(int efd, int fd);
-
-  void setNonBlock(int fd);
-  void updateEvent(int efd, int fd, int events, int op);
+  void handleRead(int fd);
+  void handleWrite(int fd);
+  int handleAccept(int efd, int fd);
 
 private:
   int createAndListen();
+  void onHandleMsg(int sockfd);
 
 
 private:
-  int m_listenfd, m_sockfd;
+  int m_epollfd;
+  int m_listenfd;
   struct epoll_event m_events[MAX_EVENTS];
 };
+
+#endif

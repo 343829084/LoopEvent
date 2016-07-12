@@ -1,6 +1,18 @@
 #include "TcpServer.h"
+#include <vector>
+#include <boost/bind.hpp>
+
 using namespace std;
 
+TcpServer::TcpServer()
+    :m_epollfd(-1)
+    ,m_listenfd(-1)
+{
+}
+
+TcpServer::~TcpServer()
+{
+}
 
 int TcpServer::createAndListen()
 {
@@ -25,57 +37,64 @@ int TcpServer::createAndListen()
     return listenfd;
 }
 
+void TcpServer::onHandleMsg(int sockfd) {
+  std::cout << "onHandleMsg socket=" << sockfd << std::endl;
+  BOOST_ASSERT(sockfd != m_listenfd);
+  if (sockfd == m_listenfd) {
+    int newSockFd = handleAccept(m_epollfd, sockfd);
+    if (0 > newSockFd) {
+      return;
+    }
+    ChannelPtr newChannel = boost::make_shared<Channel>(m_epollfd, newSockFd);
+    newChannel->setReadEvent();
+    newChannel->setWriteEvent();
+    newChannel->setRecvCallBack(boost::bind(&TcpServer::handleWrite, shared_from_this(), newSockFd ));
+    newChannel->setSendCallBack(boost::bind(&TcpServer::handleRead, shared_from_this(), newSockFd ));
+  } else {
+    std::cout << "error : " << std::endl;
+  }
+}
+
 void TcpServer::start()
 {
-  int epollfd = epoll_create(1);
-  if (epollfd< 0)
+  m_epollfd = epoll_create(1);
+  if (m_epollfd< 0)
   {
-      cout << "epoll_create error, error:" << epollfd << endl;
+      cout << "epoll_create error, error:" << m_epollfd << endl;
       return;
   }
   m_listenfd = createAndListen();
-  struct epoll_event ev;
-  ev.data.fd = m_listenfd;
-  ev.events = EPOLLIN;
-  epoll_ctl(epollfd, EPOLL_CTL_ADD, m_listenfd, &ev);
+  ChannelPtr listenChannel = boost::make_shared<Channel>(m_epollfd, m_listenfd);
+  BOOST_ASSERT(listenChannel);
+
+  listenChannel->setReadEvent();
+  listenChannel->setRecvCallBack(boost::bind(&TcpServer::onHandleMsg, shared_from_this(), m_listenfd));
 
   for(;;)
   {
-      int fds = epoll_wait(epollfd, m_events, MAX_EVENTS, -1);
+      int fds = epoll_wait(m_epollfd, m_events, MAX_EVENTS, -1);
       if(fds == -1)
       {
           cout << "epoll_wait error, errno:" << errno << endl;
           break;
       }
-      int sockfd;
+      vector<ChannelPtr> channels;
       for(int i = 0; i < fds; i++)
       {
-          if(m_events[i].events & EPOLLIN)
-          {
-            if((sockfd = m_events[i].data.fd) < 0)
-            {
-                cout << "EPOLLIN sockfd < 0 error " << endl;
-                continue;
-            }
-            if(m_events[i].data.fd == m_listenfd)
-            {
-              handleAccept(epollfd, m_listenfd);
-
-            } else {
-              handleRead(epollfd, sockfd);
-            }
-          } else if (m_events[i].events & EPOLLOUT){
-             handleWrite(epollfd, sockfd);
-          } else {
-              // do some error handle.
-          }
+          ChannelPtr newChannel = boost::make_shared<Channel>(m_epollfd, m_events[i].data.fd);
+          newChannel->setRevents(m_events[i].events);
+          channels.push_back(newChannel);
+      }
+      std::vector<ChannelPtr>::iterator iter = channels.begin();
+      for(; iter != channels.end(); ++iter) {
+        (*iter)->handleEvent();
       }
   }
   return;
 }
 
 
-void TcpServer::handleRead(int efd, int fd)
+void TcpServer::handleRead(int fd)
 {
   char buf[MAX_LINE];
   bzero(buf, MAX_LINE);
@@ -98,7 +117,7 @@ void TcpServer::handleRead(int efd, int fd)
   return;
 }
 
-void TcpServer::handleWrite(int efd, int fd)
+void TcpServer::handleWrite(int fd)
 {
   char buf[MAX_LINE] = "hello ,world!";
   int sendLen = sizeof buf;
@@ -106,11 +125,12 @@ void TcpServer::handleWrite(int efd, int fd)
             cout << "error: not finished one time" << endl;
 
 }
-void TcpServer::handleAccept(int efd, int fd)
+
+
+int TcpServer::handleAccept(int efd, int fd)
 {
   struct sockaddr_in cliaddr;
   socklen_t clilen = sizeof(cliaddr);
-  struct epoll_event ev;
   int connfd = accept(fd, (sockaddr*)&cliaddr, (socklen_t*)&clilen);
   if(connfd > 0)
   {
@@ -124,24 +144,9 @@ void TcpServer::handleAccept(int efd, int fd)
   {
       cout << "accept error, connfd:" << connfd
            << " errno:" << errno << endl;
+      return -1;
   }
   fcntl(connfd, F_SETFL, O_NONBLOCK); //no-block io
-  ev.data.fd = connfd;
-  ev.events = EPOLLIN;
-  if( -1 == epoll_ctl(efd, EPOLL_CTL_ADD, connfd, &ev))
-      cout << "epoll_ctrl error, errno:" << errno << endl;
-
-  return;
+  return connfd;
 }
 
-void TcpServer::setNonBlock(int fd)
-{
-  return;
-}
-
-
-void TcpServer::updateEvent(int efd, int fd, int events, int op)
-{
-
-  return;
-}

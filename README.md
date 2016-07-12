@@ -1,1 +1,1 @@
-增加一个类，来管理tcp连接
+增加一个channel类，是socket的封装
